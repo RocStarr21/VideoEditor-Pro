@@ -1,6 +1,4 @@
 import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
-import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
-import { TanStackDevtools } from '@tanstack/react-devtools'
 import { TooltipProvider } from '../components/ui/tooltip'
 
 import appCss from '../styles.css?url'
@@ -16,7 +14,7 @@ export const Route = createRootRoute({
         content: 'width=device-width, initial-scale=1',
       },
       {
-        title: 'OpenCut rewrite — beta.opencut.app',
+        title: 'VideoEditor Pro | RocStarr Media',
       },
     ],
     links: [
@@ -36,7 +34,7 @@ export const Route = createRootRoute({
       },
       {
         rel: 'stylesheet',
-        href: 'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400..900&display=swap',
+        href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap',
       },
       {
         rel: 'stylesheet',
@@ -57,17 +55,6 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <TooltipProvider>
           {children}
         </TooltipProvider>
-        <TanStackDevtools
-          config={{
-            position: 'bottom-right',
-          }}
-          plugins={[
-            {
-              name: 'Tanstack Router',
-              render: <TanStackRouterDevtoolsPanel />,
-            },
-          ]}
-        />
         <Scripts />
       </body>
     </html>

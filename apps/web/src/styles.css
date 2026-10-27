@@ -49,13 +49,13 @@
 }
 
 :root {
-    --background: oklch(1 0 0);
+    --background: oklch(0.985 0 0);          /* White Background */
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.145 0 0);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
+    --primary: oklch(0.3 0.16 270);         /* Action Blue */
     --primary-foreground: oklch(0.985 0 0);
     --secondary: oklch(0.97 0 0);
     --secondary-foreground: oklch(0.205 0 0);
@@ -73,9 +73,9 @@
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
     --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
+    --sidebar: oklch(0.205 0.12 280);       /* Cowboys Navy */
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.3 0.16 270);
     --sidebar-primary-foreground: oklch(0.985 0 0);
     --sidebar-accent: oklch(0.97 0 0);
     --sidebar-accent-foreground: oklch(0.205 0 0);
@@ -133,4 +133,58 @@
   p {
     @apply text-foreground
   }
+}
+/* ── VideoEditor Pro editor chrome ─────────────────────────────────────── */
+.ve-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+.ve-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.18);
+}
+.ve-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 12px;
+  width: 12px;
+  margin-top: -4.5px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 0 0 2px #3b82f6;
+}
+.ve-range::-moz-range-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.18);
+}
+.ve-range::-moz-range-thumb {
+  height: 12px;
+  width: 12px;
+  border: 0;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 0 0 2px #3b82f6;
+}
+.ve-range:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ve-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.18) transparent;
+}
+.ve-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.ve-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.16);
+}
+.ve-scroll::-webkit-scrollbar-track {
+  background: transparent;
 }

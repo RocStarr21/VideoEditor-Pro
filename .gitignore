@@ -4,6 +4,7 @@ dist/
 .env.*
 !.env.example
 docs/
+logs/
 
 # moon runtime cache
 .moon/cache/
