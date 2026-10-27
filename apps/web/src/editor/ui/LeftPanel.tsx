@@ -1,4 +1,4 @@
-import { Captions, Film, Flag, Image as ImageIcon, Layers, Mic, Music, Palette, Pause, Play, Plus, Search, Shapes, Smile, Sparkles, Trash2, Type, Upload, X } from 'lucide-react'
+import { Captions, Download, Film, Flag, FolderOpen, Image as ImageIcon, Layers, Loader2, Mic, Music, Palette, Pause, Play, Plus, RefreshCw, Search, Shapes, Smile, Sparkles, Trash2, Type, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { CAPTION_PRESETS, EFFECTS, SHAPE_PRESETS, STICKERS, TRANSITIONS } from '../model/defaults'
 import { clipEnd, isTextClip } from '../model/timeline'
@@ -6,6 +6,25 @@ import type { Asset, TextClip, TextStyle, TransitionName } from '../model/types'
 import { FILTER_PRESETS } from '../engine/filters'
 import type { FlagItem } from '../engine/flags'
 import { fetchSoundFile, getFreesoundKey, licenseLabel, searchSounds, setFreesoundKey, type SoundResult } from '../engine/freesound'
+import {
+  deleteLibraryItem,
+  dismissJob,
+  emptyTrash,
+  formatBytes,
+  getLibraryStatus,
+  getTrash,
+  isJobActive,
+  libraryAudioUrl,
+  listJobs,
+  listLibrary,
+  revealLibraryFolder,
+  startYouTubeJob,
+  updateYtDlp,
+  type LibraryItem,
+  type LibraryJob,
+  type LibraryStatus,
+  type TrashInfo,
+} from '../engine/library'
 import { shapeSvgPath } from '../engine/shapes'
 import type { WhisperModel } from '../engine/transcribe'
 import {
@@ -13,6 +32,7 @@ import {
   addEffect,
   addFilterLayer,
   addFlagSticker,
+  addLibraryAudio,
   addShape,
   addSticker,
   addText,
@@ -214,6 +234,7 @@ function AudioPanel() {
   return (
     <div className="p-3">
       <ImportZone accept="audio/*,video/*" label="Import music or sound" hint="MP3, WAV, M4A, AAC, OGG, FLAC" />
+      <YouTubeSection />
       <Section title="Voiceover">
         <p className="text-[11px] leading-5 text-zinc-400">Records your microphone from the playhead while the timeline plays muted, then places the take on an audio track.</p>
         {recording ? (
@@ -402,6 +423,256 @@ function SoundsSection() {
               {loading ? 'Loading…' : 'Load more'}
             </Button>
           )}
+        </>
+      )}
+    </Section>
+  )
+}
+
+/**
+ * YouTube → audio. The Vite process does the work (server/library): the audio
+ * lands on disk and is listed here in every project; the video it came from
+ * waits in "To Be Deleted" until the user clears it.
+ */
+function YouTubeSection() {
+  const [status, setStatus] = useState<LibraryStatus | null | undefined>(undefined)
+  const [url, setUrl] = useState('')
+  const [items, setItems] = useState<LibraryItem[]>([])
+  const [jobs, setJobs] = useState<LibraryJob[]>([])
+  const [trash, setTrash] = useState<TrashInfo | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [updating, setUpdating] = useState(false)
+  const [playing, setPlaying] = useState<string | null>(null)
+  const audio = useRef<HTMLAudioElement | null>(null)
+
+  const refresh = async () => {
+    try {
+      const [i, j, t] = await Promise.all([listLibrary(), listJobs(), getTrash()])
+      setItems(i)
+      setJobs(j)
+      setTrash(t)
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }
+
+  useEffect(() => {
+    let alive = true
+    getLibraryStatus()
+      .then((s) => {
+        if (!alive) return
+        setStatus(s)
+        void refresh()
+      })
+      .catch(() => alive && setStatus(null))
+    return () => {
+      alive = false
+      audio.current?.pause()
+    }
+  }, [])
+
+  const active = jobs.some(isJobActive)
+  useEffect(() => {
+    if (!active) return
+    const id = window.setInterval(() => void refresh(), 1000)
+    return () => window.clearInterval(id)
+  }, [active])
+
+  const submit = async () => {
+    const text = url.trim()
+    if (!text) return
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      await startYouTubeJob(text)
+      setUrl('')
+      await refresh()
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const preview = (item: LibraryItem) => {
+    if (playing === item.id) {
+      audio.current?.pause()
+      setPlaying(null)
+      return
+    }
+    audio.current?.pause()
+    const a = new Audio(libraryAudioUrl(item.id))
+    a.onended = () => setPlaying(null)
+    audio.current = a
+    void a.play()
+    setPlaying(item.id)
+  }
+
+  const remove = async (item: LibraryItem) => {
+    if (!window.confirm(`Delete "${item.title}" from the audio library?\nProjects that already use it keep their own copy.`)) return
+    if (playing === item.id) preview(item)
+    try {
+      await deleteLibraryItem(item.id)
+      await refresh()
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }
+
+  const clearTrash = async () => {
+    if (!trash?.files.length) return
+    const n = trash.files.length
+    if (!window.confirm(`Permanently delete ${n} video file${n > 1 ? 's' : ''} (${formatBytes(trash.total)}) from "To Be Deleted"?`)) return
+    try {
+      await emptyTrash()
+      await refresh()
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }
+
+  const update = async () => {
+    setUpdating(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const r = await updateYtDlp()
+      setStatus(await getLibraryStatus())
+      setNotice(r.version ? `yt-dlp is now ${r.version}.` : r.output || 'Update finished.')
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  const shown = jobs.filter((j) => j.status !== 'done' && j.status !== 'cancelled')
+  const ready = !!status?.ytdlp && !!status?.ffmpeg
+
+  return (
+    <Section title="YouTube audio">
+      {status === undefined ? (
+        <p className="text-[11px] text-zinc-500">Checking the library server…</p>
+      ) : status === null ? (
+        <p className="text-[11px] leading-5 text-zinc-400">YouTube import runs on the computer that hosts the editor, and that server is not reachable from here.</p>
+      ) : (
+        <>
+          <p className="text-[11px] leading-5 text-zinc-400">Paste a YouTube link. The audio is saved to the library below for every project; the video it came from goes to the “To Be Deleted” folder. Only use audio you have the rights to.</p>
+          {!status.ytdlp && (
+            <p className="text-[11px] leading-5 text-amber-300">
+              yt-dlp is not installed. In PowerShell: <code className="rounded bg-black/40 px-1">python -m pip install -U yt-dlp</code>, then reload.
+            </p>
+          )}
+          {!status.ffmpeg && (
+            <p className="text-[11px] leading-5 text-amber-300">
+              ffmpeg is not installed. In PowerShell: <code className="rounded bg-black/40 px-1">winget install Gyan.FFmpeg</code>, then reload.
+            </p>
+          )}
+          <div className="flex gap-1">
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') void submit()
+              }}
+              placeholder="https://www.youtube.com/watch?v=…"
+              aria-label="YouTube link"
+              className="min-w-0 flex-1 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-blue-500"
+            />
+            <Button variant="primary" onClick={() => void submit()} disabled={busy || !url.trim() || !ready}>
+              <Download size={13} /> Get audio
+            </Button>
+          </div>
+          {error && <p className="text-[11px] text-red-300">{error}</p>}
+          {notice && <p className="text-[11px] text-emerald-300">{notice}</p>}
+          {shown.length > 0 && (
+            <div className="space-y-1">
+              {shown.map((j) => (
+                <div key={j.id} className="rounded-md border border-white/10 bg-black/30 px-2 py-1.5">
+                  <div className="flex items-center gap-2">
+                    {isJobActive(j) ? <Loader2 size={12} className="shrink-0 animate-spin text-blue-300" /> : <X size={12} className="shrink-0 text-red-300" />}
+                    <p className="min-w-0 flex-1 truncate text-xs text-zinc-100" title={j.title ?? j.url}>
+                      {j.title ?? j.url}
+                    </p>
+                    <button
+                      type="button"
+                      title={isJobActive(j) ? 'Cancel' : 'Dismiss'}
+                      aria-label={isJobActive(j) ? 'Cancel' : 'Dismiss'}
+                      onClick={() => void dismissJob(j.id).then(refresh)}
+                      className="rounded p-1 text-zinc-500 hover:text-red-300"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                  {isJobActive(j) ? (
+                    <>
+                      <div className="mt-1 h-1 overflow-hidden rounded bg-white/10">
+                        <div className="h-full bg-blue-400 transition-[width]" style={{ width: `${Math.round(j.progress * 100)}%` }} />
+                      </div>
+                      <p className="mt-0.5 text-[10px] text-zinc-500">{j.status === 'downloading' ? `${j.message ?? 'Downloading…'} ${Math.round(j.progress * 100)}%` : (j.message ?? j.status)}</p>
+                    </>
+                  ) : (
+                    <p className="mt-0.5 text-[10px] text-red-300">{j.message ?? 'Failed'}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {items.length === 0 ? (
+            shown.length === 0 && <Empty>Audio you pull from YouTube appears here, in every project.</Empty>
+          ) : (
+            <div className="space-y-1">
+              {items.map((item) => (
+                <div
+                  key={item.id}
+                  draggable
+                  onDragStart={(e) => setDrag(e, DRAG_TYPES.library, item.id)}
+                  className="group flex items-center gap-2 rounded-md border border-white/10 bg-black/30 px-2 py-1.5"
+                  title={`${item.title}\nDrag onto the timeline, or press + to add at the playhead`}
+                >
+                  <button type="button" onClick={() => preview(item)} title="Preview" aria-label="Preview" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-zinc-100 hover:bg-white/20">
+                    {playing === item.id ? <Pause size={11} /> : <Play size={11} />}
+                  </button>
+                  {item.thumbnail ? <img src={item.thumbnail} alt="" draggable={false} className="h-7 w-12 shrink-0 rounded object-cover" /> : <Music size={14} className="shrink-0 text-red-300" />}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs text-zinc-100">{item.title}</p>
+                    <p className="truncate text-[10px] text-zinc-500">
+                      {formatDuration(item.duration)}
+                      {item.uploader ? ` · ${item.uploader}` : ''} · {formatBytes(item.size)}
+                    </p>
+                  </div>
+                  <button type="button" title="Add at playhead" aria-label="Add at playhead" onClick={() => void addLibraryAudio(item.id)} className="rounded p-1 text-zinc-300 hover:bg-white/10">
+                    <Plus size={14} />
+                  </button>
+                  <button type="button" title="Delete from library" aria-label="Delete from library" onClick={() => void remove(item)} className="rounded p-1 text-zinc-500 opacity-0 hover:text-red-300 group-hover:opacity-100">
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-zinc-500">
+            <button type="button" className="inline-flex items-center gap-1 hover:text-zinc-300" onClick={() => void revealLibraryFolder('audio')}>
+              <FolderOpen size={11} /> Audio folder
+            </button>
+            <button type="button" className="inline-flex items-center gap-1 hover:text-zinc-300" onClick={() => void revealLibraryFolder('trash')}>
+              <FolderOpen size={11} /> To Be Deleted{trash?.files.length ? ` (${trash.files.length} · ${formatBytes(trash.total)})` : ' (empty)'}
+            </button>
+            {trash?.files.length ? (
+              <button type="button" className="text-red-300 hover:underline" onClick={() => void clearTrash()}>
+                Empty it
+              </button>
+            ) : null}
+            {status.ytdlp && (
+              <button type="button" className="inline-flex items-center gap-1 hover:text-zinc-300 disabled:opacity-50" onClick={() => void update()} disabled={updating} title="Update yt-dlp — do this when YouTube downloads start failing">
+                <RefreshCw size={11} className={updating ? 'animate-spin' : ''} /> yt-dlp {status.ytdlp.version}
+              </button>
+            )}
+          </div>
         </>
       )}
     </Section>

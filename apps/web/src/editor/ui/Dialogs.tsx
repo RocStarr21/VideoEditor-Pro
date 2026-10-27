@@ -1,9 +1,10 @@
-import { Clapperboard, Copy, Download, Film, FolderOpen, Keyboard, LoaderCircle, Plus, Redo2, RotateCcw, Trash2, Undo2, X } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Clapperboard, Copy, Download, Film, FolderOpen, Keyboard, LoaderCircle, Plus, Redo2, RotateCcw, Send, Share2, Trash2, Undo2, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { CANVAS_RATIOS } from '../model/defaults'
 import { clipEnd, projectDuration } from '../model/timeline'
 import type { ExportFormat, ExportQuality, ExportResult, ExportSettings } from '../engine/export'
 import type { ProjectSummary } from '../engine/persistence'
+import { PLATFORM_LABELS, PLATFORM_ORDER, getSocialStatus, postVideo, uploadForPost, type PostRequest, type PostResult, type SocialStatus } from '../engine/social'
 import { deleteProjectById, duplicateProject, loadBlob, loadLut, newProject, openProject, renameProject, selectedClips } from '../state/actions'
 import { ACTIONS, comboFromEvent, isModifierOnly, loadBindings, prettyCombo, rebind, resetBindings, type Bindings } from '../state/keybindings'
 import { getEditorStore, useEditor } from '../state/store'
@@ -128,6 +129,270 @@ const GIF_SIZES = [
   { value: 480, label: '480p' },
   { value: 640, label: '640p' },
 ]
+
+type PostType = NonNullable<PostRequest['type']>
+
+/**
+ * Post the export to connected social accounts. The Social Planner on this PC
+ * publishes through RocStarr Connect, where the accounts (several per platform)
+ * are signed in once and kept, so the editor never handles a password. Preview
+ * (a dry run) comes first; the real post needs an explicit confirm.
+ */
+function PostPanel({ result }: { result: ExportResult }) {
+  const [open, setOpen] = useState(false)
+  const [status, setStatus] = useState<SocialStatus | null | undefined>(undefined)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string[]>([])
+  const [caption, setCaption] = useState('')
+  const [type, setType] = useState<PostType>('post')
+  const [when, setWhen] = useState<'now' | 'later'>('now')
+  const [runAt, setRunAt] = useState('')
+  const [stage, setStage] = useState<{ label: string; p?: number } | null>(null)
+  const [upload, setUpload] = useState<{ id: string; blob: Blob } | null>(null)
+  const [plan, setPlan] = useState<{ key: string; result: PostResult } | null>(null)
+  const [outcome, setOutcome] = useState<PostResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = () => {
+    setStatus(undefined)
+    setLoadError(null)
+    getSocialStatus()
+      .then(setStatus)
+      .catch((err: Error) => {
+        setStatus(null)
+        setLoadError(err.message)
+      })
+  }
+  useEffect(() => {
+    if (open && status === undefined && !loadError) load()
+  }, [open, status, loadError])
+  useEffect(() => {
+    setUpload(null)
+    setPlan(null)
+    setOutcome(null)
+  }, [result])
+
+  const groups = useMemo(() => {
+    const accounts = status?.accounts ?? []
+    const platforms = [...new Set(accounts.map((a) => a.platform))].sort((a, b) => {
+      const ia = PLATFORM_ORDER.indexOf(a)
+      const ib = PLATFORM_ORDER.indexOf(b)
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b)
+    })
+    return platforms.map((p) => ({ platform: p, label: PLATFORM_LABELS[p] ?? p, accounts: accounts.filter((a) => a.platform === p) }))
+  }, [status])
+
+  const ext = result.filename.split('.').pop() ?? 'mp4'
+  const scheduleIso = when === 'later' && runAt ? new Date(runAt).toISOString() : undefined
+  const settingsKey = JSON.stringify([selected, caption.trim(), type, scheduleIso ?? 'now'])
+  const canPreview = selected.length > 0 && caption.trim().length > 0 && !stage && (when === 'now' || !!runAt)
+  const planned = plan?.key === settingsKey && plan.result.ok ? plan.result : null
+  const needsType = selected.some((id) => /instagram|facebook/.test(status?.accounts.find((a) => a.id === id)?.platform ?? ''))
+
+  const ensureUpload = async () => {
+    if (upload && upload.blob === result.blob) return upload.id
+    const label = 'Sending the video to the Social Planner…'
+    setStage({ label, p: 0 })
+    const u = await uploadForPost(result.blob, ext, (p) => setStage({ label, p }))
+    setUpload({ id: u.id, blob: result.blob })
+    return u.id
+  }
+  const payload = (file: string, dryRun: boolean): PostRequest => ({ file, summary: caption.trim(), accountIds: selected, type, runAt: scheduleIso, dryRun })
+
+  const preview = async () => {
+    setError(null)
+    setOutcome(null)
+    try {
+      const file = await ensureUpload()
+      setStage({ label: 'Checking the accounts…' })
+      const r = await postVideo(payload(file, true))
+      setPlan({ key: settingsKey, result: r })
+      if (!r.ok) setError(r.error ?? 'Preview failed')
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setStage(null)
+    }
+  }
+
+  const send = async () => {
+    if (!planned) return
+    const n = selected.length
+    const whenText = scheduleIso ? `schedule it for ${new Date(scheduleIso).toLocaleString()}` : 'publish it now'
+    if (!window.confirm(`Post "${result.filename}" to ${n} account${n > 1 ? 's' : ''} and ${whenText}?`)) return
+    setError(null)
+    try {
+      const file = await ensureUpload()
+      setStage({ label: scheduleIso ? 'Scheduling…' : 'Publishing…' })
+      const r = await postVideo(payload(file, false))
+      setOutcome(r)
+      if (r.ok) setUpload(null)
+      else setError(r.error ?? 'Posting failed')
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setStage(null)
+    }
+  }
+
+  const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
+  const groupLine = (g: PostResult['results'][number]) => (g.accounts?.length ? g.accounts.map((n, i) => `${PLATFORM_LABELS[g.platforms[i] ?? ''] ?? g.platforms[i]} · ${n}`).join(', ') : g.platforms.join(', '))
+
+  return (
+    <div className="mt-3 border-t border-emerald-500/20 pt-2">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-100 hover:text-white">
+        <Share2 size={13} className="text-emerald-300" /> Post to social
+        <span className="text-[10px] font-normal text-zinc-500">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="mt-2 space-y-3">
+          {status === undefined ? (
+            <p className="text-[11px] text-zinc-500">Checking the Social Planner…</p>
+          ) : status === null ? (
+            <div className="space-y-1">
+              <p className="text-[11px] text-red-300">{loadError}</p>
+              <p className="text-[11px] leading-5 text-zinc-400">Start the Social Planner (it normally runs on its own as “RocStarr Social Command Center”), then try again.</p>
+              <Button variant="outline" onClick={load}>
+                Try again
+              </Button>
+            </div>
+          ) : (
+            <>
+              {!status.status.ok && <p className="text-[11px] leading-5 text-amber-300">{status.status.error ?? 'RocStarr Connect is not ready to publish.'}</p>}
+              {groups.length === 0 ? (
+                <p className="text-[11px] leading-5 text-zinc-400">No accounts are connected yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {groups.map((g) => (
+                    <div key={g.platform}>
+                      <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">{g.label}</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {g.accounts.map((a) => {
+                          const noVideo = a.platform === 'google'
+                          const on = selected.includes(a.id)
+                          return (
+                            <label
+                              key={a.id}
+                              title={noVideo ? 'Google Business Profile posts do not take video' : a.name}
+                              className={cx(
+                                'inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs',
+                                noVideo ? 'cursor-not-allowed border-white/5 text-zinc-600' : on ? 'border-blue-400 bg-blue-500/15 text-white' : 'border-white/10 text-zinc-300 hover:bg-white/5',
+                              )}
+                            >
+                              <input type="checkbox" className="accent-blue-500" checked={on} disabled={noVideo || !!stage} onChange={() => toggle(a.id)} />
+                              {a.name}
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <textarea
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+                onKeyDown={(e) => e.stopPropagation()}
+                placeholder="Caption — what this video is about, hashtags…"
+                rows={3}
+                disabled={!!stage}
+                className="w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs text-white outline-none placeholder:text-zinc-600 focus:border-blue-500"
+              />
+              {needsType && (
+                <Row label="Post as" hint="Instagram and Facebook: Post, Reel or Story">
+                  <Segmented
+                    value={type}
+                    size="xs"
+                    options={[
+                      { value: 'post', label: 'Post' },
+                      { value: 'reel', label: 'Reel' },
+                      { value: 'story', label: 'Story' },
+                    ]}
+                    onChange={setType}
+                  />
+                </Row>
+              )}
+              <Row label="When">
+                <Segmented
+                  value={when}
+                  size="xs"
+                  options={[
+                    { value: 'now', label: 'Publish now' },
+                    { value: 'later', label: 'Schedule' },
+                  ]}
+                  onChange={setWhen}
+                />
+                {when === 'later' && (
+                  <input
+                    type="datetime-local"
+                    value={runAt}
+                    onChange={(e) => setRunAt(e.target.value)}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    className="rounded-md border border-white/10 bg-black/30 px-2 py-1 text-xs text-white outline-none focus:border-blue-500"
+                  />
+                )}
+              </Row>
+              {stage && (
+                <div>
+                  <div className="mb-1 flex justify-between text-[11px] text-zinc-400">
+                    <span>{stage.label}</span>
+                    {stage.p !== undefined && <span>{Math.round(stage.p * 100)}%</span>}
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                    <div className={cx('h-full rounded-full bg-blue-500 transition-[width]', stage.p === undefined && 'animate-pulse')} style={{ width: `${stage.p === undefined ? 100 : Math.round(stage.p * 100)}%` }} />
+                  </div>
+                </div>
+              )}
+              {error && <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{error}</p>}
+              {planned && !outcome && (
+                <div className="rounded-md border border-white/10 bg-black/30 px-3 py-2 text-[11px] leading-5 text-zinc-300">
+                  <p className="font-semibold text-zinc-100">Ready to {scheduleIso ? 'schedule' : 'publish'}</p>
+                  {planned.results.map((g, i) => (
+                    <p key={i}>
+                      {g.type === 'post' ? 'Post' : g.type === 'reel' ? 'Reel' : 'Story'} → {groupLine(g)}
+                    </p>
+                  ))}
+                  {planned.skipped.map((s, i) => (
+                    <p key={`s${i}`} className="text-amber-300">
+                      Skipping {PLATFORM_LABELS[s.platform] ?? s.platform} · {s.name}: {s.reason}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {outcome && (
+                <div className={cx('rounded-md border px-3 py-2 text-[11px] leading-5', outcome.ok ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100' : 'border-red-500/30 bg-red-500/10 text-red-100')}>
+                  <p className="font-semibold">{outcome.ok ? (scheduleIso ? 'Scheduled' : 'Published') : 'Not posted'}</p>
+                  {outcome.results.map((g, i) => (
+                    <p key={i}>
+                      {groupLine(g)}: {g.ok ? 'ok' : g.error}
+                    </p>
+                  ))}
+                  {outcome.ok && <p className="text-zinc-300">Track it in the Social Planner queue.</p>}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[10px] leading-4 text-zinc-500">
+                  Accounts are connected once in RocStarr Connect (Marketing → Social Planner → Settings → Add account) and stay signed in.{' '}
+                  <button type="button" className="text-blue-300 hover:underline" onClick={load}>
+                    Refresh
+                  </button>
+                </p>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => void preview()} disabled={!canPreview}>
+                    Preview
+                  </Button>
+                  <Button variant="primary" onClick={() => void send()} disabled={!planned || !!stage} title={planned ? undefined : 'Preview first'}>
+                    <Send size={13} /> {scheduleIso ? 'Schedule' : 'Post now'}
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function ExportDialog() {
   const open = useEditor((s) => s.exportOpen)
@@ -319,6 +584,7 @@ function ExportDialogBody() {
             <a href={result.url} download={result.filename} className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-400">
               <Download size={13} /> Save file
             </a>
+            {(result.filename.endsWith('.mp4') || result.filename.endsWith('.webm')) && <PostPanel result={result} />}
           </div>
         )}
       </div>

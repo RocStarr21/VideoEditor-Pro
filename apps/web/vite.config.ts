@@ -7,6 +7,7 @@ import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { cloudflare } from '@cloudflare/vite-plugin'
+import { libraryServer } from './server/library/plugin'
 
 const config = defineConfig(({ mode }) => ({
   resolve: {
@@ -36,6 +37,9 @@ const config = defineConfig(({ mode }) => ({
     format: 'es' as const,
   },
   plugins: [
+    // Audio library (YouTube → audio) on /library/*. Before the Cloudflare
+    // plugin, because it needs the real Node runtime, not the Workers emulator.
+    libraryServer(),
     devtools(),
     mode === 'test' ? null : cloudflare({ viteEnvironment: { name: 'ssr' } }),
     tailwindcss(),

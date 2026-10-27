@@ -72,6 +72,7 @@ import type {
   TransitionName,
   VisualClip,
 } from '../model/types'
+import { fetchLibraryFile, getLibraryItem } from '../engine/library'
 import type { Lut3D } from '../engine/lut'
 import { classifyFile, generateThumbnails, generateWaveform, probeFile } from '../engine/media'
 import * as db from '../engine/persistence'
@@ -1283,6 +1284,25 @@ export function addShape(presetId: string) {
     const free = ensureFreeTrack(p, 'video', at, at + clip.duration)
     return addClip(free.project, { ...clip, trackId: free.trackId }, opts())
   }, { selection: [clip.id] })
+}
+
+/**
+ * Library audio (YouTube pulls kept on disk by the Vite process) is copied into
+ * the project the first time it is used, then the project's own copy is reused.
+ */
+export async function addLibraryAudio(itemId: string, at?: number, trackId?: string) {
+  try {
+    const item = await getLibraryItem(itemId)
+    const existing = Object.values(st().assets).find((a) => a.kind === 'audio' && a.name === item.fileName)
+    if (existing) {
+      addAssetToTimeline(existing.id, at, trackId)
+      return
+    }
+    const file = await fetchLibraryFile(item)
+    await importFiles([file], { at, trackId })
+  } catch (err) {
+    toast.error(`Library: ${(err as Error).message}`)
+  }
 }
 
 /** Flag stickers ship as SVG; the compositor wants a bitmap, so one is rasterised on import. */

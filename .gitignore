@@ -8,3 +8,6 @@ logs/
 
 # moon runtime cache
 .moon/cache/
+
+# YouTube audio library (media, not code)
+/library/

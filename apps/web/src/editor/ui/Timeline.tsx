@@ -51,6 +51,7 @@ import {
   addAssetToTimeline,
   addEffect,
   addFlagSticker,
+  addLibraryAudio,
   addMarker,
   addNewScene,
   addShape,
@@ -140,6 +141,7 @@ export const DRAG_TYPES = {
   sticker: 'application/x-ve-sticker',
   shape: 'application/x-ve-shape',
   flag: 'application/x-ve-flag',
+  library: 'application/x-ve-library',
   effect: 'application/x-ve-effect',
   transition: 'application/x-ve-transition',
 } as const
@@ -655,6 +657,8 @@ function TrackList({ project, zoom, width, scrollRef }: { project: Project; zoom
       const [code, ...name] = flag.split('|')
       return void addFlagSticker(code, name.join('|'))
     }
+    const library = dt.getData(DRAG_TYPES.library)
+    if (library) return void addLibraryAudio(library, t, trackId)
     const text = dt.getData(DRAG_TYPES.text)
     if (text) return addText(JSON.parse(text))
     const effect = dt.getData(DRAG_TYPES.effect)
