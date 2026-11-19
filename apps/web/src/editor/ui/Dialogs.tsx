@@ -269,18 +269,20 @@ function PostPanel({ result }: { result: ExportResult }) {
                       <div className="flex flex-wrap gap-1.5">
                         {g.accounts.map((a) => {
                           const noVideo = a.platform === 'google'
+                          const off = noVideo || !!a.expired
                           const on = selected.includes(a.id)
                           return (
                             <label
                               key={a.id}
-                              title={noVideo ? 'Google Business Profile posts do not take video' : a.name}
+                              title={noVideo ? 'Google Business Profile posts do not take video' : a.expired ? 'Sign-in expired. Reconnect it in RocStarr Connect, then press Refresh.' : a.name}
                               className={cx(
                                 'inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs',
-                                noVideo ? 'cursor-not-allowed border-white/5 text-zinc-600' : on ? 'border-blue-400 bg-blue-500/15 text-white' : 'border-white/10 text-zinc-300 hover:bg-white/5',
+                                off ? 'cursor-not-allowed border-white/5 text-zinc-600' : on ? 'border-blue-400 bg-blue-500/15 text-white' : 'border-white/10 text-zinc-300 hover:bg-white/5',
                               )}
                             >
-                              <input type="checkbox" className="accent-blue-500" checked={on} disabled={noVideo || !!stage} onChange={() => toggle(a.id)} />
+                              <input type="checkbox" className="accent-blue-500" checked={on && !off} disabled={off || !!stage} onChange={() => toggle(a.id)} />
                               {a.name}
+                              {a.expired && <span className="rounded bg-amber-500/15 px-1 text-[9px] font-semibold uppercase text-amber-300">Reconnect</span>}
                             </label>
                           )
                         })}

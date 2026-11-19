@@ -14,6 +14,8 @@ export interface SocialAccount {
   id: string
   platform: string
   name: string
+  /** The platform sign-in lapsed; posts to it fail until it is reconnected in RocStarr Connect. */
+  expired?: boolean
 }
 
 export interface SocialStatus {
@@ -60,7 +62,7 @@ export async function socialStatus(): Promise<SocialStatus> {
   const r = await planner('/api/social/status')
   const s = (r.data ?? {}) as { configured?: boolean; ready?: boolean; reason?: string | null; accounts?: SocialAccount[] }
   const list = Array.isArray(s.accounts) ? s.accounts : []
-  return { planner: PLANNER, status: { ok: !!s.ready, configured: s.configured, error: s.reason ?? undefined }, accounts: list.map((a) => ({ id: a.id, platform: a.platform, name: a.name })) }
+  return { planner: PLANNER, status: { ok: !!s.ready, configured: s.configured, error: s.reason ?? undefined }, accounts: list.map((a) => ({ id: a.id, platform: a.platform, name: a.name, expired: a.expired === true })) }
 }
 
 /** Streams the exported video straight into the Social Planner's upload folder; returns its upload id. */
